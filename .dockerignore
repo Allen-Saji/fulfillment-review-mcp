@@ -1,0 +1,11 @@
+.env
+.git
+.github
+coverage
+data
+dist
+node_modules
+tests
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
