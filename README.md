@@ -6,25 +6,9 @@ The server does not modify inventory, reservations, fulfillment routing, or ship
 
 ## Workflow
 
-```text
-MCP client
-    |
-    | 1. investigate hold
-    v
-Versioned commerce evidence
-    |
-    | 2. preview options with the same evidence version
-    v
-Date and cost tradeoffs
-    |
-    | 3. create an idempotent escalation
-    v
-Immutable SQLite review case
-    |
-    | 4. read the case back
-    v
-Human review
-```
+![Workflow diagram showing four MCP tools from hold investigation to human review](docs/fulfillment-review-workflow.png)
+
+The accessible sequence is: investigate the hold, preview options from the same evidence version, create the escalation, read it back, then hand it to a human reviewer.
 
 The evidence version is a SHA-256 digest of canonical source data. Preview and escalation calls fail closed when that version is stale. The escalation tool accepts only an order ID and evidence version; the server reconstructs the evidence and options instead of trusting model-authored case content.
 
@@ -51,19 +35,9 @@ Option IDs are sorted only for reproducible output; their order has no preferenc
 
 ## Architecture
 
-```text
-src/http.ts
-  Streamable HTTP, request limits, Host and Origin validation, health
+![Component architecture showing transport, MCP tools, domain logic, and storage boundaries](docs/fulfillment-review-architecture.png)
 
-src/server.ts + src/tools/
-  MCP server factory, exact schemas, four approved tools, error mapping
-
-src/domain/
-  canonical evidence, versioning, option feasibility, review-case invariants
-
-src/infrastructure/
-  immutable synthetic commerce source, append-only SQLite review cases
-```
+`src/http.ts` owns transport and request security. `src/server.ts` and `src/tools/` own the MCP boundary. `src/domain/` owns evidence, versioning, option feasibility, and review-case invariants. `src/infrastructure/` provides the immutable commerce source and append-only SQLite review cases.
 
 The domain layer does not know about HTTP or MCP. The commerce source exposes no mutation methods. SQLite stores only review cases and has no update or delete operation.
 
