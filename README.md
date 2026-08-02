@@ -72,6 +72,29 @@ The smoke script uses the official MCP client, validates every structured result
 
 ## MCP client configuration
 
+The hosted demonstration is available at:
+
+- MCP: `https://fulfillment-review.allensaji.dev/mcp`
+- Health: `https://fulfillment-review.allensaji.dev/health`
+
+Configure a Streamable HTTP client with the hosted endpoint:
+
+```json
+{
+  "mcpServers": {
+    "fulfillment-review": {
+      "type": "streamable-http",
+      "url": "https://fulfillment-review.allensaji.dev/mcp"
+    }
+  }
+}
+```
+
+The deployment contains only the bounded synthetic scenario described below.
+For a local server, replace the URL with `http://127.0.0.1:3000/mcp`.
+
+Equivalent local configuration:
+
 ```json
 {
   "mcpServers": {
@@ -118,6 +141,8 @@ This runs:
 6. Production TypeScript build
 
 The test suite covers deterministic hashing, missing inventory, unsupported or incomplete splits, date and cost deltas, stale evidence, immutable and idempotent storage, exact MCP annotations, arbitrary-field rejection, sanitized errors, Host and Origin validation, body limits, health checks, and the complete four-tool workflow.
+
+Release verification also ran the hosted four-tool workflow through an independent AI MCP host. The host carried the exact evidence version across calls, presented both options without ranking or selection, created or returned the canonical escalation, read the stored case back, and reported no commerce-state change.
 
 ## Container
 

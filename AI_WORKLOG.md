@@ -61,6 +61,8 @@ A model-supplied escalation payload was also rejected. The create tool accepts o
 
 AI-assisted work was checked through formatting, linting, strict type checking, automated tests, coverage thresholds, a production build, dependency audit, container build, and a live MCP client smoke test. Tests cover both expected behavior and failures such as stale evidence, unsupported splits, missing inventory, arbitrary input fields, duplicate writes, invalid hosts and origins, oversized bodies, and storage errors.
 
+The deployed server was also exercised through an independent Codex CLI MCP host. Given the order identifier and the operational goal, the host investigated the hold, carried the returned evidence version into later calls, presented both tradeoffs without choosing one, created or returned the canonical escalation, and read the stored case back. It repeated the read-only preview call once before escalation; the deterministic response was unchanged and the only write remained idempotent. This verified that redundant client behavior does not mutate commerce state or create duplicate review cases.
+
 ## Remaining risks and unfinished work
 
 - The data source contains one synthetic scenario rather than a live commerce integration.
@@ -68,4 +70,4 @@ AI-assisted work was checked through formatting, linting, strict type checking, 
 - SQLite persistence assumes one deployed service with a persistent volume; multi-instance deployment would require a shared database.
 - Shipping quotes and delivery estimates are accepted as source facts rather than independently verified.
 - A separate operations system and human process would be required to resolve recorded review cases.
-- Hosted-environment verification and the asynchronous product demonstration remain release steps.
+- The asynchronous product demonstration remains a release step.
