@@ -4,6 +4,55 @@ A Streamable HTTP MCP server for investigating partial-fulfillment holds and pre
 
 The server does not modify inventory, reservations, fulfillment routing, or shipments. It does not rank, recommend, select, or execute an option.
 
+## Try the hosted workflow
+
+The deployed MCP server can be tested without cloning this repository or running the application locally.
+
+- MCP endpoint: `https://fulfillment-review.allensaji.dev/mcp`
+- Health: <https://fulfillment-review.allensaji.dev/health>
+- Synthetic test order: `ORD-1042`
+
+The MCP endpoint is not a webpage. Add it to a client that supports remote Streamable HTTP MCP servers:
+
+```json
+{
+  "mcpServers": {
+    "fulfillment-review": {
+      "type": "streamable-http",
+      "url": "https://fulfillment-review.allensaji.dev/mcp"
+    }
+  }
+}
+```
+
+Then submit this request:
+
+```text
+Use only the fulfillment-review MCP tools.
+
+Our order-management system has flagged ORD-1042 as being on a
+partial-fulfillment hold.
+
+Investigate the hold, present every source-supported option with both
+its delivery-date and shipping-cost effects, create or return the
+human-review escalation, and read the persisted case back.
+
+Do not rank, recommend, select, or execute an option.
+
+Report the evidence version, available options, review case ID, case
+status, and whether any commerce state changed.
+```
+
+Expected result:
+
+- One missing `SKU-WALNUT-STAND`
+- Two source-supported options with date and cost effects
+- No option ranked, recommended, or selected
+- Review-case status `PENDING_HUMAN_REVIEW`
+- No inventory, reservation, routing, order, or shipment state changed
+
+This is a shared synthetic scenario. The review case may already exist, in which case escalation creation returns `created: false` and the same case ID. This is expected idempotent behavior.
+
 ## Workflow
 
 ![Workflow diagram showing four MCP tools from hold investigation to human review](docs/fulfillment-review-workflow.png)
@@ -70,30 +119,7 @@ npm run smoke -- http://127.0.0.1:3000/mcp
 
 The smoke script uses the official MCP client, validates every structured result, creates an escalation, and reads it back.
 
-## MCP client configuration
-
-The hosted demonstration is available at:
-
-- MCP: `https://fulfillment-review.allensaji.dev/mcp`
-- Health: `https://fulfillment-review.allensaji.dev/health`
-
-Configure a Streamable HTTP client with the hosted endpoint:
-
-```json
-{
-  "mcpServers": {
-    "fulfillment-review": {
-      "type": "streamable-http",
-      "url": "https://fulfillment-review.allensaji.dev/mcp"
-    }
-  }
-}
-```
-
-The deployment contains only the bounded synthetic scenario described below.
-For a local server, replace the URL with `http://127.0.0.1:3000/mcp`.
-
-Equivalent local configuration:
+## Local MCP client configuration
 
 ```json
 {
