@@ -9,7 +9,8 @@ import {
   investigateFulfillmentHold,
   type CommerceSource,
 } from "../domain/evidence.js";
-import { normalizeError } from "../errors.js";
+import { normalizeError, type AppErrorCode } from "../errors.js";
+import { SYNTHETIC_ORDER_ID } from "../infrastructure/synthetic-commerce.js";
 import type { ReviewCaseStore } from "../infrastructure/review-case-store.js";
 import type { Logger } from "../logger.js";
 import {
@@ -36,6 +37,69 @@ export interface ToolDependencies {
   logger: Logger;
 }
 
+interface ToolErrorRecovery {
+  retryable: boolean;
+  instruction: string;
+  nextTool?: (typeof TOOL_NAMES)[number];
+  suggestedArguments?: Record<string, string>;
+}
+
+function errorRecovery(
+  code: AppErrorCode,
+  toolName: (typeof TOOL_NAMES)[number],
+): ToolErrorRecovery {
+  switch (code) {
+    case "ORDER_NOT_FOUND":
+      return {
+        retryable: true,
+        instruction: `Retry investigate_fulfillment_hold with the hosted scenario order ID ${SYNTHETIC_ORDER_ID}.`,
+        nextTool: "investigate_fulfillment_hold",
+        suggestedArguments: { orderId: SYNTHETIC_ORDER_ID },
+      };
+    case "EVIDENCE_VERSION_MISMATCH":
+      return {
+        retryable: true,
+        instruction: `Call investigate_fulfillment_hold for ${SYNTHETIC_ORDER_ID}, then pass its evidenceVersion unchanged to the next tool.`,
+        nextTool: "investigate_fulfillment_hold",
+        suggestedArguments: { orderId: SYNTHETIC_ORDER_ID },
+      };
+    case "REVIEW_CASE_NOT_FOUND":
+      return {
+        retryable: true,
+        instruction: `Start with investigate_fulfillment_hold for ${SYNTHETIC_ORDER_ID}, create the escalation, then retry with the returned reviewCaseId.`,
+        nextTool: "investigate_fulfillment_hold",
+        suggestedArguments: { orderId: SYNTHETIC_ORDER_ID },
+      };
+    case "ORDER_NOT_ON_HOLD":
+      return {
+        retryable: false,
+        instruction: `Use the hosted partial-fulfillment scenario ${SYNTHETIC_ORDER_ID}.`,
+        nextTool: "investigate_fulfillment_hold",
+        suggestedArguments: { orderId: SYNTHETIC_ORDER_ID },
+      };
+    case "INVALID_REQUEST":
+      return {
+        retryable: true,
+        instruction:
+          "Correct the arguments to match the tool input schema and retry.",
+        nextTool: toolName,
+      };
+    case "STORAGE_UNAVAILABLE":
+      return {
+        retryable: true,
+        instruction: "Retry the same tool after the storage service recovers.",
+        nextTool: toolName,
+      };
+    case "INTERNAL_ERROR":
+      return {
+        retryable: true,
+        instruction:
+          "Retry the same tool once. If it fails again, report the error code to the operator.",
+        nextTool: toolName,
+      };
+  }
+}
+
 function errorResult(
   error: unknown,
   toolName: (typeof TOOL_NAMES)[number],
@@ -43,6 +107,7 @@ function errorResult(
   startedAt: number,
 ): CallToolResult {
   const normalized = normalizeError(error);
+  const recovery = errorRecovery(normalized.code, toolName);
   const fields = {
     tool: toolName,
     errorCode: normalized.code,
@@ -61,9 +126,25 @@ function errorResult(
     content: [
       {
         type: "text",
-        text: `${normalized.code}: ${normalized.message}`,
+        text: `${normalized.code}: ${normalized.message} Recovery: ${recovery.instruction}`,
       },
     ],
+    structuredContent: {
+      error: {
+        code: normalized.code,
+        message: normalized.message,
+        retryable: recovery.retryable,
+      },
+      recovery: {
+        instruction: recovery.instruction,
+        ...(recovery.nextTool === undefined
+          ? {}
+          : { nextTool: recovery.nextTool }),
+        ...(recovery.suggestedArguments === undefined
+          ? {}
+          : { suggestedArguments: recovery.suggestedArguments }),
+      },
+    },
   };
 }
 
@@ -86,8 +167,7 @@ export function registerFulfillmentTools(
     "investigate_fulfillment_hold",
     {
       title: "Investigate fulfillment hold",
-      description:
-        "Read the order, reservation, warehouse inventory, and hold evidence without changing commerce state. Call this before previewing options.",
+      description: `Start the hosted workflow by reading order ${SYNTHETIC_ORDER_ID}, its reservation, warehouse inventory, and hold evidence without changing commerce state. The orderId may be omitted because it defaults to ${SYNTHETIC_ORDER_ID}.`,
       inputSchema: investigateInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -132,7 +212,7 @@ export function registerFulfillmentTools(
     {
       title: "Preview fulfillment options",
       description:
-        "Return source-supported fulfillment options with both delivery-date and shipping-cost effects. Does not rank, recommend, select, or execute an option.",
+        "After investigation, pass its exact evidenceVersion to return every source-supported option with delivery-date and shipping-cost effects. Does not rank, recommend, select, or execute an option.",
       inputSchema: previewInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -182,7 +262,7 @@ export function registerFulfillmentTools(
     {
       title: "Create human-review escalation",
       description:
-        "Create or return one immutable review case for an order and evidence version. This is the only write; it does not change inventory, reservations, routing, or shipments.",
+        "After previewing options, pass the exact investigated evidenceVersion to create or return one immutable review case. This is the only write; it does not change inventory, reservations, routing, or shipments.",
       inputSchema: createEscalationInputSchema,
       annotations: {
         readOnlyHint: false,
@@ -242,7 +322,7 @@ export function registerFulfillmentTools(
     {
       title: "Get human-review escalation",
       description:
-        "Read back the exact immutable review case, including its evidence snapshot, options, and tradeoffs.",
+        "Pass the exact reviewCaseId returned by create_human_review_escalation to read back the immutable evidence snapshot, options, and tradeoffs.",
       inputSchema: getEscalationInputSchema,
       annotations: {
         readOnlyHint: true,

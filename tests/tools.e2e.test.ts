@@ -14,6 +14,7 @@ import {
 import { TOOL_NAMES } from "../src/tools/register-tools.js";
 import {
   createSyntheticCommerceSource,
+  createSyntheticSnapshot,
   SYNTHETIC_ORDER_ID,
 } from "../src/infrastructure/synthetic-commerce.js";
 import { startTestApplication } from "./helpers.js";
@@ -37,6 +38,19 @@ describe("MCP fulfillment workflow", () => {
       const createTool = result.tools.find(
         (tool) => tool.name === "create_human_review_escalation",
       );
+      const investigateTool = result.tools.find(
+        (tool) => tool.name === "investigate_fulfillment_hold",
+      );
+      expect(investigateTool?.description).toContain(SYNTHETIC_ORDER_ID);
+      const investigateInputSchemaJson = JSON.stringify(
+        investigateTool?.inputSchema,
+      );
+      expect(investigateInputSchemaJson).toContain(
+        `"default":"${SYNTHETIC_ORDER_ID}"`,
+      );
+      expect(investigateInputSchemaJson).toContain(
+        `Hosted scenario order ID. Omit this field or use ${SYNTHETIC_ORDER_ID}.`,
+      );
       expect(createTool?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: false,
@@ -47,6 +61,84 @@ describe("MCP fulfillment workflow", () => {
         (candidate) => candidate.name !== "create_human_review_escalation",
       )) {
         expect(tool.annotations?.readOnlyHint).toBe(true);
+      }
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("defaults a context-free investigation to the hosted scenario", async () => {
+    const running = await startTestApplication();
+    try {
+      const result = await running.client.callTool({
+        name: "investigate_fulfillment_hold",
+        arguments: {},
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        orderId: SYNTHETIC_ORDER_ID,
+      });
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("returns actionable validation errors for malformed order IDs", async () => {
+    const running = await startTestApplication();
+    try {
+      for (const malformedOrderId of ["invalid", "", "ord-1042", 1042]) {
+        const result = await running.client.callTool({
+          name: "investigate_fulfillment_hold",
+          arguments: { orderId: malformedOrderId },
+        });
+
+        expect(result.isError).toBe(true);
+        expect(textContent(result)).toContain("Input validation error");
+        expect(textContent(result)).toContain(
+          `Omit orderId or use ${SYNTHETIC_ORDER_ID} for the hosted scenario.`,
+        );
+      }
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("returns actionable validation errors for workflow references", async () => {
+    const running = await startTestApplication();
+    try {
+      for (const evidenceVersion of [undefined, "stale-version"]) {
+        const result = await running.client.callTool({
+          name: "preview_fulfillment_options",
+          arguments: {
+            orderId: SYNTHETIC_ORDER_ID,
+            ...(evidenceVersion === undefined ? {} : { evidenceVersion }),
+          },
+        });
+
+        expect(result.isError).toBe(true);
+        expect(textContent(result)).toContain(
+          "evidenceVersion must be the exact 64-character value returned by investigate_fulfillment_hold",
+        );
+        expect(textContent(result)).toContain(
+          "Run that tool again and copy the returned value unchanged.",
+        );
+      }
+
+      for (const reviewCaseId of [undefined, "not-a-review-case-id"]) {
+        const result = await running.client.callTool({
+          name: "get_human_review_escalation",
+          arguments:
+            reviewCaseId === undefined ? {} : { reviewCaseId: reviewCaseId },
+        });
+
+        expect(result.isError).toBe(true);
+        expect(textContent(result)).toContain(
+          "reviewCaseId must be the exact UUID returned by create_human_review_escalation",
+        );
+        expect(textContent(result)).toContain(
+          "Run that tool first and copy the returned value unchanged.",
+        );
       }
     } finally {
       await running.close();
@@ -218,12 +310,29 @@ describe("MCP fulfillment workflow", () => {
       expect(staleCreate.isError).toBe(true);
       expect(textContent(staleCreate)).toContain("EVIDENCE_VERSION_MISMATCH");
 
-      const missingOrder = await running.client.callTool({
-        name: "investigate_fulfillment_hold",
-        arguments: { orderId: "ORD-404" },
-      });
-      expect(missingOrder.isError).toBe(true);
-      expect(textContent(missingOrder)).toContain("ORDER_NOT_FOUND");
+      for (const unknownOrderId of ["ORD-404", "ORD-PROBE", "ORD-9999"]) {
+        const missingOrder = await running.client.callTool({
+          name: "investigate_fulfillment_hold",
+          arguments: { orderId: unknownOrderId },
+        });
+        expect(missingOrder.isError).toBe(true);
+        expect(textContent(missingOrder)).toContain("ORDER_NOT_FOUND");
+        expect(textContent(missingOrder)).toContain(
+          `Recovery: Retry investigate_fulfillment_hold with the hosted scenario order ID ${SYNTHETIC_ORDER_ID}.`,
+        );
+        expect(missingOrder.structuredContent).toEqual({
+          error: {
+            code: "ORDER_NOT_FOUND",
+            message: `Order ${unknownOrderId} was not found in the commerce source.`,
+            retryable: true,
+          },
+          recovery: {
+            instruction: `Retry investigate_fulfillment_hold with the hosted scenario order ID ${SYNTHETIC_ORDER_ID}.`,
+            nextTool: "investigate_fulfillment_hold",
+            suggestedArguments: { orderId: SYNTHETIC_ORDER_ID },
+          },
+        });
+      }
 
       const missingCase = await running.client.callTool({
         name: "get_human_review_escalation",
@@ -234,6 +343,68 @@ describe("MCP fulfillment workflow", () => {
       expect(missingCase.isError).toBe(true);
       expect(textContent(missingCase)).toContain("REVIEW_CASE_NOT_FOUND");
       expect(textContent(missingCase)).not.toContain("/home/");
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("explains how to recover from unavailable order states", async () => {
+    const snapshot = createSyntheticSnapshot();
+    snapshot.order.status = "READY_TO_FULFILL";
+    const running = await startTestApplication({
+      commerceSource: createSyntheticCommerceSource([snapshot]),
+    });
+    try {
+      const result = await running.client.callTool({
+        name: "investigate_fulfillment_hold",
+        arguments: { orderId: SYNTHETIC_ORDER_ID },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(textContent(result)).toContain("ORDER_NOT_ON_HOLD");
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: "ORDER_NOT_ON_HOLD",
+          retryable: false,
+        },
+        recovery: {
+          nextTool: "investigate_fulfillment_hold",
+          suggestedArguments: { orderId: SYNTHETIC_ORDER_ID },
+        },
+      });
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("explains how to recover from application request errors", async () => {
+    const invalidRequestSource: CommerceSource = {
+      getSnapshot() {
+        throw new AppError("INVALID_REQUEST", "The source request is invalid.");
+      },
+    };
+    const running = await startTestApplication({
+      commerceSource: invalidRequestSource,
+    });
+    try {
+      const result = await running.client.callTool({
+        name: "investigate_fulfillment_hold",
+        arguments: { orderId: SYNTHETIC_ORDER_ID },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(textContent(result)).toContain(
+        "Recovery: Correct the arguments to match the tool input schema and retry.",
+      );
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: "INVALID_REQUEST",
+          retryable: true,
+        },
+        recovery: {
+          nextTool: "investigate_fulfillment_hold",
+        },
+      });
     } finally {
       await running.close();
     }
@@ -251,7 +422,9 @@ describe("MCP fulfillment workflow", () => {
         },
       });
       expect(result.isError).toBe(true);
-      expect(textContent(result)).toContain("Unrecognized key");
+      expect(textContent(result)).toContain(
+        "Remove unsupported arguments and retry using only the fields shown in this tool's input schema.",
+      );
     } finally {
       await running.close();
     }
