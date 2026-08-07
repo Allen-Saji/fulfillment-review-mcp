@@ -4,11 +4,16 @@ import { loadConfig } from "../src/config.js";
 import { createLogger } from "../src/logger.js";
 
 describe("configuration", () => {
-  it("uses safe local defaults", () => {
-    expect(loadConfig({})).toEqual({
+  it("requires PostgreSQL and uses safe network defaults", () => {
+    expect(() => loadConfig({})).toThrow();
+    expect(
+      loadConfig({
+        DATABASE_URL: "postgresql://localhost/fulfillment_review",
+      }),
+    ).toEqual({
       host: "127.0.0.1",
       port: 3000,
-      databasePath: "./data/review-cases.sqlite",
+      databaseUrl: "postgresql://localhost/fulfillment_review",
       allowedHosts: ["localhost", "127.0.0.1"],
       allowedOriginHosts: ["localhost", "127.0.0.1"],
       logLevel: "info",
@@ -20,7 +25,7 @@ describe("configuration", () => {
       loadConfig({
         HOST: "0.0.0.0",
         PORT: "8080",
-        DATABASE_PATH: "/data/cases.sqlite",
+        DATABASE_URL: "postgresql://db.example.com/fulfillment_review",
         ALLOWED_HOSTS: "mcp.example.com, localhost",
         ALLOWED_ORIGIN_HOSTS: "app.example.com",
         LOG_LEVEL: "debug",
@@ -28,7 +33,7 @@ describe("configuration", () => {
     ).toEqual({
       host: "0.0.0.0",
       port: 8080,
-      databasePath: "/data/cases.sqlite",
+      databaseUrl: "postgresql://db.example.com/fulfillment_review",
       allowedHosts: ["mcp.example.com", "localhost"],
       allowedOriginHosts: ["app.example.com"],
       logLevel: "debug",
@@ -36,8 +41,14 @@ describe("configuration", () => {
   });
 
   it("rejects invalid ports and empty allowlists", () => {
-    expect(() => loadConfig({ PORT: "70000" })).toThrow();
-    expect(() => loadConfig({ ALLOWED_HOSTS: " , " })).toThrow();
+    const required = {
+      DATABASE_URL: "postgresql://localhost/fulfillment_review",
+    };
+    expect(() => loadConfig({ ...required, PORT: "70000" })).toThrow();
+    expect(() => loadConfig({ ...required, ALLOWED_HOSTS: " , " })).toThrow();
+    expect(() =>
+      loadConfig({ DATABASE_URL: "https://db.example.com/database" }),
+    ).toThrow();
   });
 });
 

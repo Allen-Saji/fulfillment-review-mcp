@@ -4,12 +4,10 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 
 import { createHttpApplication } from "../src/http.js";
-import {
-  openReviewCaseStore,
-  type ReviewCaseStore,
-} from "../src/infrastructure/sqlite-review-case-store.js";
+import type { ReviewCaseStore } from "../src/infrastructure/review-case-store.js";
 import { createSyntheticCommerceSource } from "../src/infrastructure/synthetic-commerce.js";
 import { memoryLogger, startTestApplication, testConfig } from "./helpers.js";
+import { openInMemoryReviewCaseStore } from "./in-memory-review-case-store.js";
 
 interface RawResponse {
   statusCode: number;
@@ -74,7 +72,7 @@ describe("HTTP application", () => {
   it("reports unavailable health after storage closes", async () => {
     const running = await startTestApplication();
     try {
-      running.store.close();
+      await running.store.close();
       const health = await fetch(new URL("/health", running.endpoint).href);
       expect(health.status).toBe(503);
       expect(await health.json()).toEqual({ status: "unavailable" });
@@ -177,7 +175,7 @@ describe("HTTP application", () => {
 
   it("makes close idempotent", async () => {
     const logs: string[] = [];
-    const store = openReviewCaseStore(":memory:");
+    const store = openInMemoryReviewCaseStore();
     const application = createHttpApplication({
       config: testConfig(),
       commerceSource: createSyntheticCommerceSource(),
@@ -193,11 +191,11 @@ describe("HTTP application", () => {
 
   it("sanitizes unexpected health-check failures", async () => {
     const logs: string[] = [];
-    const underlyingStore = openReviewCaseStore(":memory:");
+    const underlyingStore = openInMemoryReviewCaseStore();
     const throwingStore: ReviewCaseStore = {
       ...underlyingStore,
       isReady() {
-        throw new Error("private database detail");
+        return Promise.reject(new Error("private database detail"));
       },
     };
     const application = createHttpApplication({

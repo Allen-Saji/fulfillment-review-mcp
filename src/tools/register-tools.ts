@@ -10,7 +10,7 @@ import {
   type CommerceSource,
 } from "../domain/evidence.js";
 import { normalizeError } from "../errors.js";
-import type { ReviewCaseStore } from "../infrastructure/sqlite-review-case-store.js";
+import type { ReviewCaseStore } from "../infrastructure/review-case-store.js";
 import type { Logger } from "../logger.js";
 import {
   createEscalationInputSchema,
@@ -191,7 +191,7 @@ export function registerFulfillmentTools(
         openWorldHint: false,
       },
     },
-    ({ orderId, evidenceVersion }) => {
+    async ({ orderId, evidenceVersion }) => {
       const startedAt = performance.now();
       try {
         const investigation = investigateFulfillmentHold(
@@ -201,7 +201,7 @@ export function registerFulfillmentTools(
         assertEvidenceVersion(evidenceVersion, investigation.evidenceVersion);
         const preview = calculateFulfillmentOptions(investigation);
         const { reviewCase, created } =
-          dependencies.reviewCaseStore.createOrGet(
+          await dependencies.reviewCaseStore.createOrGet(
             buildReviewCaseDraft(investigation, preview),
           );
         const result = createEscalationOutputSchema.parse({

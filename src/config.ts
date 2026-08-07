@@ -11,11 +11,19 @@ const commaSeparatedHosts = z
   )
   .pipe(z.array(z.string().min(1)).min(1));
 
+const postgresUrl = z.url().refine(
+  (value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === "postgres:" || protocol === "postgresql:";
+  },
+  { message: "DATABASE_URL must use the postgres or postgresql protocol." },
+);
+
 const configSchema = z
   .object({
     HOST: z.string().min(1).default("127.0.0.1"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
-    DATABASE_PATH: z.string().min(1).default("./data/review-cases.sqlite"),
+    DATABASE_URL: postgresUrl,
     ALLOWED_HOSTS: commaSeparatedHosts.default(["localhost", "127.0.0.1"]),
     ALLOWED_ORIGIN_HOSTS: commaSeparatedHosts.default([
       "localhost",
@@ -28,7 +36,7 @@ const configSchema = z
 export interface AppConfig {
   host: string;
   port: number;
-  databasePath: string;
+  databaseUrl: string;
   allowedHosts: string[];
   allowedOriginHosts: string[];
   logLevel: "debug" | "info" | "warn" | "error";
@@ -39,7 +47,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv): AppConfig {
   return {
     host: parsed.HOST,
     port: parsed.PORT,
-    databasePath: parsed.DATABASE_PATH,
+    databaseUrl: parsed.DATABASE_URL,
     allowedHosts: parsed.ALLOWED_HOSTS,
     allowedOriginHosts: parsed.ALLOWED_ORIGIN_HOSTS,
     logLevel: parsed.LOG_LEVEL,

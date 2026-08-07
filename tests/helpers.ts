@@ -8,12 +8,10 @@ import {
 import type { AppConfig } from "../src/config.js";
 import type { CommerceSource } from "../src/domain/evidence.js";
 import { createHttpApplication, type HttpApplication } from "../src/http.js";
-import {
-  openReviewCaseStore,
-  type ReviewCaseStore,
-} from "../src/infrastructure/sqlite-review-case-store.js";
+import type { ReviewCaseStore } from "../src/infrastructure/review-case-store.js";
 import { createSyntheticCommerceSource } from "../src/infrastructure/synthetic-commerce.js";
 import type { Logger } from "../src/logger.js";
+import { openInMemoryReviewCaseStore } from "./in-memory-review-case-store.js";
 
 export interface StartedTestApplication {
   application: HttpApplication;
@@ -48,7 +46,7 @@ export function testConfig(): AppConfig {
   return {
     host: "127.0.0.1",
     port: 0,
-    databasePath: ":memory:",
+    databaseUrl: "postgresql://test.invalid/fulfillment_review",
     allowedHosts: ["127.0.0.1", "localhost"],
     allowedOriginHosts: ["127.0.0.1", "localhost"],
     logLevel: "error",
@@ -60,7 +58,7 @@ export async function startTestApplication(options?: {
   maxRequestBodyBytes?: number;
 }): Promise<StartedTestApplication> {
   const logs: string[] = [];
-  const store = openReviewCaseStore(":memory:", {
+  const store = openInMemoryReviewCaseStore({
     createId: () => "11111111-1111-4111-8111-111111111111",
     now: () => "2026-08-01T12:00:00.000Z",
   });

@@ -290,7 +290,7 @@ describe("MCP fulfillment workflow", () => {
       const investigation = investigateOutputSchema.parse(
         investigationCall.structuredContent,
       );
-      running.store.close();
+      await running.store.close();
       const result = await running.client.callTool({
         name: "create_human_review_escalation",
         arguments: {

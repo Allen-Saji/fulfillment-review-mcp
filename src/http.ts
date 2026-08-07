@@ -15,7 +15,7 @@ import { createMcpHandler } from "@modelcontextprotocol/server";
 
 import type { AppConfig } from "./config.js";
 import type { CommerceSource } from "./domain/evidence.js";
-import type { ReviewCaseStore } from "./infrastructure/sqlite-review-case-store.js";
+import type { ReviewCaseStore } from "./infrastructure/review-case-store.js";
 import type { Logger } from "./logger.js";
 import { buildMcpServer } from "./server.js";
 
@@ -175,7 +175,7 @@ export function createHttpApplication(
       try {
         const route = pathName(completeRequest);
         if (route === "/health" && completeRequest.method === "GET") {
-          const ready = dependencies.reviewCaseStore.isReady();
+          const ready = await dependencies.reviewCaseStore.isReady();
           respondJson(response, ready ? 200 : 503, {
             status: ready ? "ok" : "unavailable",
           });
@@ -251,7 +251,7 @@ export function createHttpApplication(
         });
       });
       await mcpHandler.close();
-      dependencies.reviewCaseStore.close();
+      await dependencies.reviewCaseStore.close();
     },
   };
 }

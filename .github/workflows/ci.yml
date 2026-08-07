@@ -12,6 +12,22 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17.10-alpine3.23
+        env:
+          POSTGRES_DB: fulfillment_review_test
+          POSTGRES_USER: fulfillment_review_test
+          POSTGRES_PASSWORD: fulfillment_review_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fulfillment_review_test -d fulfillment_review_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://fulfillment_review_test:fulfillment_review_test@127.0.0.1:5432/fulfillment_review_test
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -33,3 +49,11 @@ jobs:
 
       - name: Build container
         run: docker build --tag fulfillment-review-mcp:ci .
+
+      - name: Validate Compose configuration
+        env:
+          POSTGRES_DB: fulfillment_review
+          POSTGRES_USER: fulfillment_review
+          POSTGRES_PASSWORD: local-test-password
+          DATABASE_URL: postgresql://fulfillment_review:local-test-password@postgres:5432/fulfillment_review
+        run: docker compose config --quiet
