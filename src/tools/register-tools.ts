@@ -89,7 +89,6 @@ export function registerFulfillmentTools(
       description:
         "Read the order, reservation, warehouse inventory, and hold evidence without changing commerce state. Call this before previewing options.",
       inputSchema: investigateInputSchema,
-      outputSchema: investigateOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -100,9 +99,8 @@ export function registerFulfillmentTools(
     ({ orderId }) => {
       const startedAt = performance.now();
       try {
-        const result = investigateFulfillmentHold(
-          dependencies.commerceSource,
-          orderId,
+        const result = investigateOutputSchema.parse(
+          investigateFulfillmentHold(dependencies.commerceSource, orderId),
         );
         logSuccess(
           "investigate_fulfillment_hold",
@@ -136,7 +134,6 @@ export function registerFulfillmentTools(
       description:
         "Return source-supported fulfillment options with both delivery-date and shipping-cost effects. Does not rank, recommend, select, or execute an option.",
       inputSchema: previewInputSchema,
-      outputSchema: previewOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -152,7 +149,9 @@ export function registerFulfillmentTools(
           orderId,
         );
         assertEvidenceVersion(evidenceVersion, investigation.evidenceVersion);
-        const result = calculateFulfillmentOptions(investigation);
+        const result = previewOutputSchema.parse(
+          calculateFulfillmentOptions(investigation),
+        );
         logSuccess(
           "preview_fulfillment_options",
           dependencies.logger,
@@ -185,7 +184,6 @@ export function registerFulfillmentTools(
       description:
         "Create or return one immutable review case for an order and evidence version. This is the only write; it does not change inventory, reservations, routing, or shipments.",
       inputSchema: createEscalationInputSchema,
-      outputSchema: createEscalationOutputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -246,7 +244,6 @@ export function registerFulfillmentTools(
       description:
         "Read back the exact immutable review case, including its evidence snapshot, options, and tradeoffs.",
       inputSchema: getEscalationInputSchema,
-      outputSchema: getEscalationOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -254,10 +251,12 @@ export function registerFulfillmentTools(
         openWorldHint: false,
       },
     },
-    ({ reviewCaseId }) => {
+    async ({ reviewCaseId }) => {
       const startedAt = performance.now();
       try {
-        const result = dependencies.reviewCaseStore.get(reviewCaseId);
+        const result = getEscalationOutputSchema.parse(
+          await dependencies.reviewCaseStore.get(reviewCaseId),
+        );
         logSuccess(
           "get_human_review_escalation",
           dependencies.logger,

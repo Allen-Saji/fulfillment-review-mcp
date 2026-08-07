@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { CommerceSource } from "../src/domain/evidence.js";
+import {
+  investigateFulfillmentHold,
+  type CommerceSource,
+} from "../src/domain/evidence.js";
 import { AppError, normalizeError } from "../src/errors.js";
 import {
   createEscalationOutputSchema,
@@ -44,6 +47,80 @@ describe("MCP fulfillment workflow", () => {
         (candidate) => candidate.name !== "create_human_review_escalation",
       )) {
         expect(tool.annotations?.readOnlyHint).toBe(true);
+      }
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("keeps every wire-level workflow response below the probe budget", async () => {
+    const commerceSource = createSyntheticCommerceSource();
+    const evidenceVersion = investigateFulfillmentHold(
+      commerceSource,
+      SYNTHETIC_ORDER_ID,
+    ).evidenceVersion;
+    const running = await startTestApplication({ commerceSource });
+    try {
+      const requests = [
+        {
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "response-budget-test", version: "0.1.0" },
+          },
+        },
+        { method: "tools/list", params: {} },
+        {
+          method: "tools/call",
+          params: {
+            name: "investigate_fulfillment_hold",
+            arguments: { orderId: SYNTHETIC_ORDER_ID },
+          },
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "preview_fulfillment_options",
+            arguments: { orderId: SYNTHETIC_ORDER_ID, evidenceVersion },
+          },
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "create_human_review_escalation",
+            arguments: { orderId: SYNTHETIC_ORDER_ID, evidenceVersion },
+          },
+        },
+        {
+          method: "tools/call",
+          params: {
+            name: "get_human_review_escalation",
+            arguments: {
+              reviewCaseId: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+        },
+      ];
+
+      for (const [index, request] of requests.entries()) {
+        const response = await fetch(running.endpoint, {
+          method: "POST",
+          headers: {
+            accept: "application/json, text/event-stream",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: index + 1,
+            ...request,
+          }),
+        });
+        const body = await response.text();
+        expect(response.status).toBe(200);
+        expect(body).not.toContain('"isError":true');
+        expect(body).not.toContain('"error":{');
+        expect(Buffer.byteLength(body)).toBeLessThanOrEqual(10 * 1024);
       }
     } finally {
       await running.close();
