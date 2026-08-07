@@ -34,7 +34,7 @@ AI-assisted work:
 
 - Proposed domain, persistence, tool, and transport boundaries.
 - Implemented deterministic evidence hashing and option calculation.
-- Implemented SQLite idempotency and MCP tool contracts.
+- Implemented PostgreSQL idempotency, migrations, and MCP tool contracts.
 - Added negative-path, transport, persistence, and end-to-end tests.
 - Drafted and revised usage, architecture, and deployment documentation.
 
@@ -63,11 +63,19 @@ AI-assisted work was checked through formatting, linting, strict type checking, 
 
 The deployed server was also exercised through an independent Codex CLI MCP host. Given the order identifier and the operational goal, the host investigated the hold, carried the returned evidence version into later calls, presented both tradeoffs without choosing one, created or returned the canonical escalation, and read the stored case back. It repeated the read-only preview call once before escalation; the deterministic response was unchanged and the only write remained idempotent. This verified that redundant client behavior does not mutate commerce state or create duplicate review cases.
 
+## Revision after hosted evaluation
+
+The evaluator reported that its hosted MCP probe could not complete because a response exceeded its limit and requested PostgreSQL instead of SQLite. The response limit and PostgreSQL preference were not present in the original assignment, but the storage choice should have been confirmed before implementation.
+
+The live endpoint was measured before changing code. `initialize` returned 654 bytes, while `tools/list` returned 29,624 bytes. Per-tool measurement showed that deeply nested advertised output schemas accounted for most of the discovery payload. The revision keeps strict input schemas in tool discovery, validates full structured results with the same internal Zod schemas, and adds a wire-level regression test requiring `tools/list` to remain at or below 10 KiB.
+
+The SQLite adapter was replaced with a PostgreSQL 17 store. A tracked SQL migration creates the review-case table and database uniqueness constraints. The create-or-get operation uses a transaction and `ON CONFLICT`, including a concurrent-creation test that proves only one canonical case is created. CI now runs the complete suite against a real PostgreSQL service and validates the Compose configuration.
+
 ## Remaining risks and unfinished work
 
 - The data source contains one synthetic scenario rather than a live commerce integration.
 - Authentication and tenant isolation are intentionally excluded from this bounded demonstration.
-- SQLite persistence assumes one deployed service with a persistent volume; multi-instance deployment would require a shared database.
+- The self-hosted PostgreSQL instance has persistent local storage but no off-server backup or high-availability replica in this bounded demonstration.
 - Shipping quotes and delivery estimates are accepted as source facts rather than independently verified.
 - A separate operations system and human process would be required to resolve recorded review cases.
-- The asynchronous product demonstration remains a release step.
+- The original asynchronous demonstration predates the PostgreSQL revision; the repository and revised-submission verification are the current technical record.

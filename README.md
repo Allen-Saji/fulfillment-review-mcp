@@ -1,6 +1,6 @@
 # Fulfillment Review MCP
 
-A Streamable HTTP MCP server for investigating partial-fulfillment holds and preparing complete human-review cases. It reads a synthetic commerce snapshot, calculates source-supported fulfillment options, presents delivery-date and shipping-cost effects together, and persists one immutable escalation for a human decision.
+A Streamable HTTP MCP server for investigating partial-fulfillment holds and preparing complete human-review cases. It reads a synthetic commerce snapshot, calculates source-supported fulfillment options, presents delivery-date and shipping-cost effects together, and persists one immutable escalation in PostgreSQL for a human decision.
 
 The server does not modify inventory, reservations, fulfillment routing, or shipments. It does not rank, recommend, select, or execute an option.
 
@@ -72,6 +72,8 @@ The evidence version is a SHA-256 digest of canonical source data. Preview and e
 
 The create tool is the only write. Its MCP annotations mark it as non-destructive and idempotent. All tools operate in a closed domain.
 
+Tool discovery stays below a 10 KiB wire-response budget for constrained MCP hosts. The server advertises strict input schemas and validates every structured result against its full internal Zod schema before returning it, without embedding the deeply nested result schemas in `tools/list`.
+
 ## Synthetic scenario
 
 The included order, `ORD-1042`, is partially reserved at a Bengaluru warehouse. One line item is unavailable there. The source snapshot supports two alternatives:
@@ -86,24 +88,23 @@ Option IDs are sorted only for reproducible output; their order has no preferenc
 
 ![Component architecture showing transport, MCP tools, domain logic, and storage boundaries](docs/fulfillment-review-architecture.png)
 
-`src/http.ts` owns transport and request security. `src/server.ts` and `src/tools/` own the MCP boundary. `src/domain/` owns evidence, versioning, option feasibility, and review-case invariants. `src/infrastructure/` provides the immutable commerce source and append-only SQLite review cases.
+`src/http.ts` owns transport and request security. `src/server.ts` and `src/tools/` own the MCP boundary. `src/domain/` owns evidence, versioning, option feasibility, and review-case invariants. `src/infrastructure/` provides the immutable commerce source and migration-backed PostgreSQL review cases.
 
-The domain layer does not know about HTTP or MCP. The commerce source exposes no mutation methods. SQLite stores only review cases and has no update or delete operation.
+The domain layer does not know about HTTP, MCP, or PostgreSQL. The commerce source exposes no mutation methods. PostgreSQL stores only review cases, and the application exposes no update or delete operation.
 
 ## Requirements
 
 - Node.js 24 LTS
 - npm 11 or later
+- Docker with Compose for the local PostgreSQL service
 
 All direct dependencies are pinned and the lockfile is committed.
 
 ## Run locally
 
 ```bash
-nvm use
 cp .env.example .env
-npm ci
-npm run dev
+docker compose up --build --detach
 ```
 
 The default endpoints are:
@@ -118,6 +119,14 @@ npm run smoke -- http://127.0.0.1:3000/mcp
 ```
 
 The smoke script uses the official MCP client, validates every structured result, creates an escalation, and reads it back.
+
+For host-based development, start only PostgreSQL and point the Node process at the published loopback port:
+
+```bash
+docker compose up --detach postgres
+npm ci
+DATABASE_URL=postgresql://fulfillment_review:replace-with-a-random-alphanumeric-password@127.0.0.1:5432/fulfillment_review npm run dev
+```
 
 ## Local MCP client configuration
 
@@ -140,21 +149,22 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:3000/mcp --transport 
 
 ## Configuration
 
-| Variable               | Default                      | Description                                                                                                         |
-| ---------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `HOST`                 | `127.0.0.1`                  | HTTP bind address.                                                                                                  |
-| `PORT`                 | `3000`                       | HTTP port.                                                                                                          |
-| `DATABASE_PATH`        | `./data/review-cases.sqlite` | SQLite database path.                                                                                               |
-| `ALLOWED_HOSTS`        | `localhost,127.0.0.1`        | Allowed Host header hostnames without ports.                                                                        |
-| `ALLOWED_ORIGIN_HOSTS` | `localhost,127.0.0.1`        | Allowed Origin hostnames without schemes or ports. Requests without Origin are allowed for non-browser MCP clients. |
-| `LOG_LEVEL`            | `info`                       | `debug`, `info`, `warn`, or `error`.                                                                                |
+| Variable               | Default               | Description                                                                                                         |
+| ---------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `HOST`                 | `127.0.0.1`           | HTTP bind address.                                                                                                  |
+| `PORT`                 | `3000`                | HTTP port.                                                                                                          |
+| `DATABASE_URL`         | Required              | PostgreSQL connection URL. It is validated at startup and never logged.                                             |
+| `ALLOWED_HOSTS`        | `localhost,127.0.0.1` | Allowed Host header hostnames without ports.                                                                        |
+| `ALLOWED_ORIGIN_HOSTS` | `localhost,127.0.0.1` | Allowed Origin hostnames without schemes or ports. Requests without Origin are allowed for non-browser MCP clients. |
+| `LOG_LEVEL`            | `info`                | `debug`, `info`, `warn`, or `error`.                                                                                |
 
 Configuration is validated before the server starts. Logs are structured JSON and exclude request bodies, evidence payloads, environment values, database paths, and secrets.
 
 ## Verification
 
 ```bash
-npm run verify
+docker compose up --detach postgres
+DATABASE_URL=postgresql://fulfillment_review:replace-with-a-random-alphanumeric-password@127.0.0.1:5432/fulfillment_review npm run verify
 ```
 
 This runs:
@@ -166,25 +176,20 @@ This runs:
 5. V8 coverage with 95 percent global thresholds
 6. Production TypeScript build
 
-The test suite covers deterministic hashing, missing inventory, unsupported or incomplete splits, date and cost deltas, stale evidence, immutable and idempotent storage, exact MCP annotations, arbitrary-field rejection, sanitized errors, Host and Origin validation, body limits, health checks, and the complete four-tool workflow.
+The test suite covers deterministic hashing, missing inventory, unsupported or incomplete splits, date and cost deltas, stale evidence, migration-backed PostgreSQL persistence, concurrent idempotent creation, exact MCP annotations, the tool-discovery response budget, arbitrary-field rejection, sanitized errors, Host and Origin validation, body limits, health checks, and the complete four-tool workflow.
 
 Release verification also ran the hosted four-tool workflow through an independent AI MCP host. The host carried the exact evidence version across calls, presented both options without ranking or selection, created or returned the canonical escalation, read the stored case back, and reported no commerce-state change.
 
 ## Container
 
 ```bash
-docker build -t fulfillment-review-mcp .
-docker run --rm \
-  -p 3000:3000 \
-  -v fulfillment-review-data:/data \
-  -e ALLOWED_HOSTS=localhost,127.0.0.1 \
-  -e ALLOWED_ORIGIN_HOSTS=localhost,127.0.0.1 \
-  fulfillment-review-mcp
+cp .env.example .env
+docker compose up --build --detach
 ```
 
-The image uses Node.js 24, runs as a non-root user, includes a health check, and stores SQLite data in `/data`.
+The application image uses Node.js 24, runs as a non-root user with a read-only filesystem, and includes a health check. Compose runs PostgreSQL 17 on a private service network with a persistent named volume and publishes both service ports to loopback only.
 
-For a remote deployment, terminate TLS at a reverse proxy, keep the application port private, preserve the public Host header, configure the exact public hostname allowlists, and mount `/data` persistently.
+For a remote deployment, terminate TLS at a reverse proxy, keep the application and PostgreSQL ports private, preserve the public Host header, configure the exact public hostname allowlists, use a generated database password, and persist the PostgreSQL data volume.
 
 ## Security and production boundary
 
@@ -220,7 +225,7 @@ The repository intentionally excludes:
 ## Design decisions
 
 - No embedded model call: the MCP host performs reasoning; the server owns facts and deterministic calculations.
-- No ORM: one append-only table is clearer as direct SQL.
+- No ORM: one migration-backed append-only table and one transactional create-or-get operation are clearer as direct parameterized SQL.
 - No web framework: Node HTTP plus the official MCP Node adapter covers the transport surface.
 - No mutable commerce adapter: unsafe operations are absent rather than guarded by prompt instructions.
 - Integer minor currency units: cost calculations avoid floating-point ambiguity.
